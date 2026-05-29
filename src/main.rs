@@ -71,15 +71,15 @@ struct NpcSnake {
 }
 
 impl NpcSnake {
-    fn new(width: i16, height: i16) -> Self {
+    fn new(width: i16, height: i16, player_length: usize) -> Self {
         let mut rng = rand::thread_rng();
-        let start_x = rng.gen_range(3..width - 3);
+        // NPC出生长度在1到玩家长度之间随机
+        let body_len = rng.gen_range(1..=player_length).min((width - 5) as usize).max(1);
+        let start_x = rng.gen_range((body_len as i16 + 2)..width - 3);
         let start_y = rng.gen_range(3..height - 3);
-        let body = vec![
-            Position { x: start_x, y: start_y },
-            Position { x: start_x - 1, y: start_y },
-            Position { x: start_x - 2, y: start_y },
-        ];
+        let body: Vec<Position> = (0..body_len as i16)
+            .map(|i| Position { x: start_x - i, y: start_y })
+            .collect();
         let directions = [Direction::Up, Direction::Down, Direction::Left, Direction::Right];
         let direction = directions[rng.gen_range(0..4)];
         Self {
@@ -90,19 +90,20 @@ impl NpcSnake {
         }
     }
 
-    fn new_avoiding(width: i16, height: i16, player_snake: &[Position], all_npc_bodies: &HashSet<(i16, i16)>) -> Option<Self> {
+    fn new_avoiding(width: i16, height: i16, player_snake: &[Position], all_npc_bodies: &HashSet<(i16, i16)>, player_length: usize) -> Option<Self> {
         let mut rng = rand::thread_rng();
+        let player_set: HashSet<(i16, i16)> = player_snake.iter().map(|p| (p.x, p.y)).collect();
         // 尝试多次找到一个不与玩家或其他NPC蛇重叠的位置
-        for _ in 0..20 {
-            let start_x = rng.gen_range(3..width - 3);
+        for _ in 0..30 {
+            // NPC出生长度在1到玩家长度之间随机
+            let body_len = rng.gen_range(1..=player_length).min((width - 5) as usize).max(1);
+            let start_x = rng.gen_range((body_len as i16 + 2)..width - 3);
             let start_y = rng.gen_range(3..height - 3);
-            let body = vec![
-                Position { x: start_x, y: start_y },
-                Position { x: start_x - 1, y: start_y },
-                Position { x: start_x - 2, y: start_y },
-            ];
+            let body: Vec<Position> = (0..body_len as i16)
+                .map(|i| Position { x: start_x - i, y: start_y })
+                .collect();
             let overlaps = body.iter().any(|p| {
-                player_snake.contains(p) || all_npc_bodies.contains(&(p.x, p.y))
+                player_set.contains(&(p.x, p.y)) || all_npc_bodies.contains(&(p.x, p.y))
             });
             if !overlaps {
                 let directions = [Direction::Up, Direction::Down, Direction::Left, Direction::Right];
@@ -304,6 +305,40 @@ impl ParticleSystem {
         });
     }
 
+    fn emit_npc_death_effect(&mut self, x: i16, y: i16) {
+        if self.particles.len() > 200 {
+            return;
+        }
+        let mut rng = rand::thread_rng();
+        let chars = ['×', '†', '‡', '†', '‡', '†'];
+        let colors = [Color::Red, Color::DarkRed, Color::Magenta];
+
+        for _ in 0..20 {
+            let angle = rng.gen_range(0.0..std::f32::consts::TAU);
+            let speed = rng.gen_range(0.5..2.0);
+            let ml = rng.gen_range(10..22);
+            self.particles.push(Particle {
+                x: x as f32,
+                y: y as f32,
+                dx: angle.cos() * speed,
+                dy: angle.sin() * speed * 0.5,
+                life: ml,
+                max_life: ml,
+                ch: chars[rng.gen_range(0..chars.len())],
+                color: colors[rng.gen_range(0..colors.len())],
+            });
+        }
+
+        self.floating_texts.push(FloatingText {
+            text: "💀DEAD!".to_string(),
+            x: x as f32,
+            y: y as f32,
+            life: 25,
+            max_life: 25,
+            color: Color::Red,
+        });
+    }
+
     fn update(&mut self) {
         for p in &mut self.particles {
             p.x += p.dx;
@@ -401,6 +436,7 @@ impl Game {
                 y: rng.gen_range(2..height - 2),
             },
         };
+        let initial_length = initial_snake.len();
         Game {
             snake: initial_snake,
             direction: Direction::Right,
@@ -418,7 +454,7 @@ impl Game {
             direction_held_since: None,
             particles: ParticleSystem::new(),
             score_flash: None,
-            npc_snakes: vec![NpcSnake::new(width, height)],
+            npc_snakes: vec![NpcSnake::new(width, height, initial_length)],
             npc_spawn_timer: Instant::now(),
             npc_spawn_interval_secs: 15, // 每15秒生成一条新NPC蛇
             max_npc_snakes: 8,
@@ -462,7 +498,7 @@ impl Game {
             && self.npc_spawn_timer.elapsed() >= Duration::from_secs(self.npc_spawn_interval_secs)
         {
             let npc_set = self.all_npc_bodies();
-            if let Some(new_snake) = NpcSnake::new_avoiding(self.width, self.height, &self.snake, &npc_set) {
+            if let Some(new_snake) = NpcSnake::new_avoiding(self.width, self.height, &self.snake, &npc_set, self.snake.len()) {
                 self.npc_snakes.push(new_snake);
             }
             self.npc_spawn_timer = Instant::now();
@@ -512,13 +548,31 @@ impl Game {
             self.state = GameState::GameOver;
             return;
         }
-        // 撞任意NPC蛇检测
+        // 玩家蛇头碰到NPC蛇身 → 玩家死亡
         for npc in &self.npc_snakes {
             if npc.body.contains(&new_head) {
                 self.death_reason = Some("碰到敌蛇".to_string());
                 self.state = GameState::GameOver;
                 return;
             }
+        }
+        // NPC蛇头碰到玩家蛇身 → NPC死亡消失
+        let mut npc_indices_to_remove: Vec<usize> = Vec::new();
+        let player_set: HashSet<(i16, i16)> = self.snake.iter().map(|p| (p.x, p.y)).collect();
+        for (idx, npc) in self.npc_snakes.iter().enumerate() {
+            if let Some(npc_head) = npc.body.first() {
+                if player_set.contains(&(npc_head.x, npc_head.y)) {
+                    npc_indices_to_remove.push(idx);
+                }
+            }
+        }
+        // 从后往前删除，避免索引偏移；播放死亡粒子效果
+        for &idx in npc_indices_to_remove.iter().rev() {
+            if let Some(dead_npc) = self.npc_snakes.get(idx) {
+                let head_pos = dead_npc.body[0];
+                self.particles.emit_npc_death_effect(head_pos.x, head_pos.y);
+            }
+            self.npc_snakes.remove(idx);
         }
 
         self.snake.insert(0, new_head);
@@ -724,7 +778,9 @@ fn draw_help(stdout: &mut io::Stdout, w: i16, h: i16) -> io::Result<()> {
         "║                                                            ║",
         "║  游戏规则:                                                 ║",
         "║    - 吃到食物(●)得分+10                                    ║",
-        "║    - 撞墙、撞到自己或碰到敌蛇游戏结束                      ║",
+        "║    - 撞墙、撞到自己游戏结束                                ║",
+        "║    - 玩家蛇头碰到敌蛇身体 → 玩家死亡！                      ║",
+        "║    - 敌蛇蛇头碰到玩家身体 → 敌蛇死亡消失(有特效!)          ║",
         "║    - 场上初始有1条敌蛇(NPC)，每隔15秒新增1条！             ║",
         "║    - 敌蛇最多8条，越往后越危险                             ║",
         "║    - 随分数增加，移动速度逐渐加快                          ║",

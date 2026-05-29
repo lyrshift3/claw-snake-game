@@ -1,0 +1,27 @@
+[
+  {
+    "content": "添加NPC死亡粒子特效",
+    "activeForm": "添加NPC死亡粒子特效",
+    "status": "completed"
+  },
+  {
+    "content": "修改NPC生成长度为1到玩家长度随机",
+    "activeForm": "修改NPC生成长度为随机",
+    "status": "in_progress"
+  },
+  {
+    "content": "修改玩家碰NPC逻辑：NPC死亡消失而非游戏结束",
+    "activeForm": "修改NPC碰撞逻辑",
+    "status": "pending"
+  },
+  {
+    "content": "更新帮助文本和游戏信息",
+    "activeForm": "更新帮助文本和游戏信息",
+    "status": "pending"
+  },
+  {
+    "content": "编译验证",
+    "activeForm": "编译验证",
+    "status": "pending"
+  }
+]
