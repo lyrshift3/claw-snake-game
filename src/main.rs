@@ -652,10 +652,12 @@ impl Game {
         self.direction_stack.retain(|&d| d != dir);
         if let Some(&top) = self.direction_stack.last() {
             self.direction = top;
+            self.direction_key_held = true;
+            self.direction_held_since = Some(Instant::now() - Duration::from_millis(200));
+        } else {
+            self.direction_key_held = false;
+            self.direction_held_since = None;
         }
-        // 栈空时保持当前方向不变
-        self.direction_key_held = false;
-        self.direction_held_since = None;
     }
 }
 
