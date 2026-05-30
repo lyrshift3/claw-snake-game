@@ -1,5 +1,7 @@
 /target
-# Claw Code local artifacts
-.claw/settings.local.json
-.claw/sessions/
-.clawhip/
+.claw
+./claw/plugins/
+./claw/sessions/
+.sandbox-home
+.sandbox-tmp
+
