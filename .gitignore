@@ -4,4 +4,5 @@
 ./claw/sessions/
 .sandbox-home
 .sandbox-tmp
+.sisyphus
 
