@@ -10,6 +10,9 @@ use std::collections::HashSet;
 use std::io::{self, Write};
 use std::time::{Duration, Instant};
 
+const MIN_GAME_WIDTH: i16 = 20;
+const MIN_GAME_HEIGHT: i16 = 10;
+
 // ===== 类型定义 =====
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -592,6 +595,30 @@ impl Game {
         }
     }
 
+    fn handle_resize(&mut self, new_w: i16, new_h: i16) {
+        if new_w < MIN_GAME_WIDTH || new_h < MIN_GAME_HEIGHT {
+            return;
+        }
+        self.width = new_w;
+        self.height = new_h;
+        self.snake.retain(|p| p.x > 0 && p.x < new_w - 1 && p.y > 0 && p.y < new_h - 1);
+        if self.snake.is_empty() {
+            self.snake.push(Position { x: new_w / 2, y: new_h / 2 });
+        }
+        for npc in &mut self.npc_snakes {
+            npc.body.retain(|p| p.x > 0 && p.x < new_w - 1 && p.y > 0 && p.y < new_h - 1);
+            if npc.body.is_empty() {
+                npc.body.push(Position { x: new_w / 2, y: new_h / 2 });
+            }
+        }
+        self.npc_snakes.retain(|npc| !npc.body.is_empty());
+        if self.food.position.x <= 0 || self.food.position.x >= new_w - 1
+            || self.food.position.y <= 0 || self.food.position.y >= new_h - 1
+        {
+            self.spawn_food();
+        }
+    }
+
     /// 计算当前速度（毫秒/步），得分越高越快，按住同方向键3倍加速
     fn get_speed_ms(&self) -> u64 {
         let reduction = (self.score / 10) as u64 * 5;
@@ -716,44 +743,53 @@ fn draw_game(stdout: &mut io::Stdout, game: &Game) -> io::Result<()> {
 
     // 绘制信息面板
     let info_y = game.height as u16 + 1;
+    let (term_w, term_h) = terminal::size().unwrap_or((80, 24));
+    let max_y = term_h.saturating_sub(1);
+
     let elapsed = game.start_time.elapsed().as_secs();
     let min = elapsed / 60;
     let sec = elapsed % 60;
 
-    let score_color = if flash_active { Color::White } else { Color::Yellow };
-    execute!(stdout, cursor::MoveTo(0, info_y))?;
-    print!("{}", format!("分数: {:<6}", game.score).with(score_color));
-    execute!(stdout, cursor::MoveTo(20, info_y))?;
-    print!("{}", format!("最高分: {:<6}", game.high_score).with(Color::Magenta));
-    execute!(stdout, cursor::MoveTo(40, info_y))?;
-    print!("{}", format!("时间: {:02}:{:02}", min, sec).with(Color::White));
-    execute!(stdout, cursor::MoveTo(60, info_y))?;
-    let speed_text = if game.direction_key_held {
-        format!("速度: {}ms [3x!] ", game.get_speed_ms())
-    } else {
-        format!("速度: {}ms        ", game.get_speed_ms())
-    };
-    let speed_color = if game.direction_key_held { Color::Green } else { Color::DarkGrey };
-    print!("{}", speed_text.with(speed_color));
+    if info_y <= max_y {
+        let score_color = if flash_active { Color::White } else { Color::Yellow };
+        let _ = execute!(stdout, cursor::MoveTo(0, info_y));
+        print!("{}", format!("分数: {:<6}", game.score).with(score_color));
+        let _ = execute!(stdout, cursor::MoveTo(20.min(term_w.saturating_sub(1)), info_y));
+        print!("{}", format!("最高分: {:<6}", game.high_score).with(Color::Magenta));
+        let _ = execute!(stdout, cursor::MoveTo(40.min(term_w.saturating_sub(1)), info_y));
+        print!("{}", format!("时间: {:02}:{:02}", min, sec).with(Color::White));
+        let _ = execute!(stdout, cursor::MoveTo(60.min(term_w.saturating_sub(1)), info_y));
+        let speed_text = if game.direction_key_held {
+            format!("速度: {}ms [3x!] ", game.get_speed_ms())
+        } else {
+            format!("速度: {}ms        ", game.get_speed_ms())
+        };
+        let speed_color = if game.direction_key_held { Color::Green } else { Color::DarkGrey };
+        print!("{}", speed_text.with(speed_color));
+    }
 
-    // 显示敌蛇数量
-    execute!(stdout, cursor::MoveTo(0, info_y + 1))?;
-    let npc_count = game.npc_snakes.len();
-    let npc_warn = if npc_count >= 5 { " ⚠危险!" } else { "" };
-    print!("{}", format!("敌蛇: {} 条 (每15秒+1){:<10}", npc_count, npc_warn).with(
-        if npc_count >= 5 { Color::Red } else { Color::DarkYellow }
-    ));
+    if info_y + 1 <= max_y {
+        let _ = execute!(stdout, cursor::MoveTo(0, info_y + 1));
+        let npc_count = game.npc_snakes.len();
+        let npc_warn = if npc_count >= 5 { " ⚠危险!" } else { "" };
+        print!("{}", format!("敌蛇: {} 条 (每15秒+1){:<10}", npc_count, npc_warn).with(
+            if npc_count >= 5 { Color::Red } else { Color::DarkYellow }
+        ));
+    }
 
-    execute!(stdout, cursor::MoveTo(0, info_y + 2))?;
-    print!(
-        "{}",
-        "操作: ↑↓←→/WASD | P暂停 | R重开 | H帮助 | Q退出 | 按住同方向键3x加速"
-            .with(Color::DarkGrey)
-    );
+    if info_y + 2 <= max_y {
+        let _ = execute!(stdout, cursor::MoveTo(0, info_y + 2));
+        print!(
+            "{}",
+            "操作: ↑↓←→/WASD | P暂停 | R重开 | H帮助 | Q退出 | 按住同方向键3x加速"
+                .with(Color::DarkGrey)
+        );
+    }
 
-    // 清除可能残留的文字行
-    execute!(stdout, cursor::MoveTo(0, (game.height + 5) as u16))?;
-    print!("{:<40}", "");
+    if info_y + 3 <= max_y {
+        let _ = execute!(stdout, cursor::MoveTo(0, info_y + 3));
+        print!("{:<40}", "");
+    }
 
     stdout.flush()
 }
@@ -876,9 +912,12 @@ fn draw_quit_confirm(stdout: &mut io::Stdout, game: &Game) -> io::Result<()> {
 }
 
 fn draw_paused(stdout: &mut io::Stdout, game: &Game) -> io::Result<()> {
-    let info_y = (game.height + 5) as u16;
-    execute!(stdout, cursor::MoveTo(0, info_y))?;
-    print!("{}", "游戏已暂停，按 P 继续...".with(Color::Yellow));
+    let info_y = game.height as u16 + 1;
+    let (_, term_h) = terminal::size().unwrap_or((80, 24));
+    if info_y < term_h {
+        let _ = execute!(stdout, cursor::MoveTo(0, info_y));
+        print!("{}", "游戏已暂停，按 P 继续...".with(Color::Yellow));
+    }
     stdout.flush()
 }
 
@@ -896,58 +935,98 @@ fn main() -> io::Result<()> {
     )?;
 
     let (term_w, term_h) = terminal::size()?;
-    let game_w: i16 = term_w.min(80) as i16;
-    let game_h: i16 = (term_h.saturating_sub(6)).min(24) as i16;
+    let mut game_w: i16 = (term_w as i16).max(MIN_GAME_WIDTH);
+    let mut game_h: i16 = (term_h as i16).saturating_sub(6).max(MIN_GAME_HEIGHT);
 
     let mut game = Game::new(game_w, game_h, 0);
     let mut high_score: u32 = 0;
 
     loop {
-        execute!(stdout, BeginSynchronizedUpdate)?;
+        if let Err(e) = (|| -> io::Result<()> {
+            execute!(stdout, BeginSynchronizedUpdate)?;
 
-        match game.state {
-            GameState::Playing => {
-                let now = Instant::now();
-                if now.duration_since(game.last_update) >= Duration::from_millis(game.get_speed_ms())
-                {
-                    game.update();
-                    game.last_update = now;
+            match game.state {
+                GameState::Playing => {
+                    let now = Instant::now();
+                    if now.duration_since(game.last_update) >= Duration::from_millis(game.get_speed_ms())
+                    {
+                        game.update();
+                        game.last_update = now;
+                    }
+
+                    game.particles.update();
+
+                    draw_game(&mut stdout, &game)?;
+
+                    if game.state == GameState::GameOver {
+                        high_score = game.high_score;
+                        draw_game_over(&mut stdout, &game)?;
+                    }
                 }
-
-                game.particles.update();
-
-                draw_game(&mut stdout, &game)?;
-
-                if game.state == GameState::GameOver {
-                    high_score = game.high_score;
+                GameState::Paused => {
+                    game.particles.update();
+                    draw_game(&mut stdout, &game)?;
+                    draw_paused(&mut stdout, &game)?;
+                }
+                GameState::Help => {
+                    draw_help(&mut stdout, game_w, game_h)?;
+                }
+                GameState::GameOver => {
+                    game.particles.update();
                     draw_game_over(&mut stdout, &game)?;
                 }
+                GameState::QuitConfirm => {
+                    draw_quit_confirm(&mut stdout, &game)?;
+                }
             }
-            GameState::Paused => {
-                game.particles.update();
-                draw_game(&mut stdout, &game)?;
-                draw_paused(&mut stdout, &game)?;
+
+            execute!(stdout, EndSynchronizedUpdate)?;
+            stdout.flush()?;
+            Ok(())
+        })() {
+            if e.kind() == io::ErrorKind::BrokenPipe {
+                break;
             }
-            GameState::Help => {
-                draw_help(&mut stdout, game_w, game_h)?;
-            }
-            GameState::GameOver => {
-                game.particles.update();
-                draw_game_over(&mut stdout, &game)?;
-            }
-            GameState::QuitConfirm => {
-                draw_quit_confirm(&mut stdout, &game)?;
+            let _ = execute!(stdout, terminal::Clear(ClearType::All));
+            let _ = stdout.flush();
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        match event::poll(Duration::from_millis(50)) {
+            Ok(true) => {}
+            Ok(false) => continue,
+            Err(e) => {
+                if e.kind() == io::ErrorKind::BrokenPipe {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+                continue;
             }
         }
 
-        execute!(stdout, EndSynchronizedUpdate)?;
-        stdout.flush()?;
+        let ev = match event::read() {
+            Ok(ev) => ev,
+            Err(e) => {
+                if e.kind() == io::ErrorKind::BrokenPipe {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+                continue;
+            }
+        };
 
-        if event::poll(Duration::from_millis(50))? {
-            if let Event::Key(KeyEvent {
+        match ev {
+            Event::Resize(w, h) => {
+                let new_w = (w as i16).max(MIN_GAME_WIDTH);
+                let new_h = (h as i16).saturating_sub(6).max(MIN_GAME_HEIGHT);
+                game.handle_resize(new_w, new_h);
+                game_w = new_w;
+                game_h = new_h;
+                let _ = execute!(stdout, terminal::Clear(ClearType::All));
+            }
+            Event::Key(KeyEvent {
                 code, modifiers, kind, ..
-            }) = event::read()?
-            {
+            }) => {
                 if code == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
                     break;
                 }
@@ -1062,6 +1141,7 @@ fn main() -> io::Result<()> {
                     }
                 }
             }
+            _ => {}
         }
     }
 
