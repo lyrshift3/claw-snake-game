@@ -727,6 +727,7 @@ fn draw_game(stdout: &mut io::Stdout, game: &Game) -> io::Result<()> {
                     } else {
                         print!("{}", '●'.to_string().with(Color::DarkRed));
                     }
+                    let _ = execute!(stdout, cursor::MoveTo((x + 1) as u16, y as u16));
                 } else {
                     print!(" ");
                 }
