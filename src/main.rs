@@ -76,10 +76,9 @@ struct NpcSnake {
 impl NpcSnake {
     fn new(width: i16, height: i16, player_length: usize) -> Self {
         let mut rng = rand::thread_rng();
-        // NPC出生长度在1到玩家长度之间随机
-        let body_len = rng.gen_range(1..=player_length).min((width - 5) as usize).max(1);
-        let start_x = rng.gen_range((body_len as i16 + 2)..width - 3);
-        let start_y = rng.gen_range(3..height - 3);
+        let body_len = rng.gen_range(1..=player_length).min((width - 4) as usize).max(1);
+        let start_x = rng.gen_range((body_len as i16 + 1)..width - 1);
+        let start_y = rng.gen_range(2..height - 1);
         let body: Vec<Position> = (0..body_len as i16)
             .map(|i| Position { x: start_x - i, y: start_y })
             .collect();
@@ -98,10 +97,9 @@ impl NpcSnake {
         let player_set: HashSet<(i16, i16)> = player_snake.iter().map(|p| (p.x, p.y)).collect();
         // 尝试多次找到一个不与玩家或其他NPC蛇重叠的位置
         for _ in 0..30 {
-            // NPC出生长度在1到玩家长度之间随机
-            let body_len = rng.gen_range(1..=player_length).min((width - 5) as usize).max(1);
-            let start_x = rng.gen_range((body_len as i16 + 2)..width - 3);
-            let start_y = rng.gen_range(3..height - 3);
+            let body_len = rng.gen_range(1..=player_length).min((width - 4) as usize).max(1);
+            let start_x = rng.gen_range((body_len as i16 + 1)..width - 1);
+            let start_y = rng.gen_range(2..height - 1);
             let body: Vec<Position> = (0..body_len as i16)
                 .map(|i| Position { x: start_x - i, y: start_y })
                 .collect();
@@ -176,10 +174,10 @@ impl NpcSnake {
         // 撞墙或撞到自己/玩家蛇/其他NPC蛇时改变方向
         let self_set: HashSet<(i16, i16)> = self.body.iter().map(|p| (p.x, p.y)).collect();
         let player_set: HashSet<(i16, i16)> = player_snake.iter().map(|p| (p.x, p.y)).collect();
-        let will_collide = new_head.x <= 1
-            || new_head.x >= width - 2
-            || new_head.y <= 1
-            || new_head.y >= height - 2
+        let will_collide = new_head.x <= 0
+            || new_head.x >= width - 1
+            || new_head.y <= 0
+            || new_head.y >= height - 1
             || self_set.contains(&(new_head.x, new_head.y))
             || player_set.contains(&(new_head.x, new_head.y))
             || other_npc_bodies.contains(&(new_head.x, new_head.y));
@@ -198,10 +196,10 @@ impl NpcSnake {
                     Direction::Left => Position { x: head.x - 1, y: head.y },
                     Direction::Right => Position { x: head.x + 1, y: head.y },
                 };
-                let alt_ok = alt_head.x > 1
-                    && alt_head.x < width - 2
-                    && alt_head.y > 1
-                    && alt_head.y < height - 2
+                let alt_ok = alt_head.x > 0
+                    && alt_head.x < width - 1
+                    && alt_head.y > 0
+                    && alt_head.y < height - 1
                     && !self_set.contains(&(alt_head.x, alt_head.y))
                     && !player_set.contains(&(alt_head.x, alt_head.y))
                     && !other_npc_bodies.contains(&(alt_head.x, alt_head.y));
@@ -359,27 +357,26 @@ impl ParticleSystem {
     }
 
     fn draw(&self, stdout: &mut io::Stdout) -> io::Result<()> {
-        // 绘制粒子
+        let (term_w, term_h) = terminal::size().unwrap_or((80, 24));
         for p in &self.particles {
             let px = p.x.round() as i16;
             let py = p.y.round() as i16;
-            if px >= 0 && py >= 0 {
-                execute!(stdout, cursor::MoveTo(px as u16, py as u16))?;
+            if px >= 0 && py >= 0 && px < term_w as i16 && py < term_h as i16 {
+                let _ = execute!(stdout, cursor::MoveTo(px as u16, py as u16));
                 if p.life > p.max_life * 2 / 3 {
                     print!("{}", p.ch.to_string().with(p.color));
                 } else if p.life > p.max_life / 3 {
                     print!("{}", p.ch.to_string().with(Color::DarkYellow));
                 } else {
-                    print!("{}", '.'.to_string().with(Color::DarkGrey));
+                    print!("{}", ' '.to_string().with(Color::DarkGrey));
                 }
             }
         }
-        // 绘制飘字
         for t in &self.floating_texts {
             let tx = t.x.round() as i16;
             let ty = t.y.round() as i16;
-            if tx >= 0 && ty >= 0 {
-                execute!(stdout, cursor::MoveTo(tx as u16, ty as u16))?;
+            if tx >= 0 && ty >= 0 && tx < term_w as i16 && ty < term_h as i16 {
+                let _ = execute!(stdout, cursor::MoveTo(tx as u16, ty as u16));
                 if t.life > t.max_life / 2 {
                     print!("{}", t.text.clone().with(t.color));
                 } else {
@@ -481,8 +478,8 @@ impl Game {
         let mut rng = rand::thread_rng();
         loop {
             let new_pos = Position {
-                x: rng.gen_range(2..self.width - 2),
-                y: rng.gen_range(2..self.height - 2),
+                x: rng.gen_range(1..self.width - 1),
+                y: rng.gen_range(1..self.height - 1),
             };
             if !self.snake.contains(&new_pos) && !npc_set.contains(&(new_pos.x, new_pos.y)) {
                 self.food.position = new_pos;
@@ -536,10 +533,10 @@ impl Game {
         };
 
         // 撞墙检测
-        if new_head.x <= 1
-            || new_head.x >= self.width - 2
-            || new_head.y <= 1
-            || new_head.y >= self.height - 2
+        if new_head.x <= 0
+            || new_head.x >= self.width - 1
+            || new_head.y <= 0
+            || new_head.y >= self.height - 1
         {
             self.death_reason = Some("撞墙".to_string());
             self.state = GameState::GameOver;
@@ -791,6 +788,7 @@ fn draw_game(stdout: &mut io::Stdout, game: &Game) -> io::Result<()> {
         print!("{:<40}", "");
     }
 
+    let _ = execute!(stdout, cursor::Hide, cursor::MoveTo(0, 0));
     stdout.flush()
 }
 
