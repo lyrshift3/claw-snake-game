@@ -418,6 +418,8 @@ struct Game {
     max_npc_snakes: usize,
     // 死亡原因
     death_reason: Option<String>,
+    // 无敌状态截止时间
+    invincible_until: Option<Instant>,
 }
 
 impl Game {
@@ -459,6 +461,7 @@ impl Game {
             npc_spawn_interval_secs: 15, // 每15秒生成一条新NPC蛇
             max_npc_snakes: 8,
             death_reason: None,
+            invincible_until: None,
         }
     }
 
@@ -548,26 +551,45 @@ impl Game {
             self.state = GameState::GameOver;
             return;
         }
-        // 玩家蛇头碰到NPC蛇身 → 玩家死亡
-        for npc in &self.npc_snakes {
+        // 玩家蛇头碰到NPC蛇身
+        let invincible = self.invincible_until.map_or(false, |t| Instant::now() < t);
+        let mut npc_head_indices_to_remove: Vec<usize> = Vec::new();
+        for (idx, npc) in self.npc_snakes.iter().enumerate() {
             if npc.body.contains(&new_head) {
-                self.death_reason = Some("碰到敌蛇".to_string());
-                self.state = GameState::GameOver;
-                return;
+                if invincible {
+                    npc_head_indices_to_remove.push(idx);
+                } else {
+                    self.death_reason = Some("碰到敌蛇".to_string());
+                    self.state = GameState::GameOver;
+                    return;
+                }
             }
         }
         // NPC蛇头碰到玩家蛇身 → NPC死亡消失
-        let mut npc_indices_to_remove: Vec<usize> = Vec::new();
         let player_set: HashSet<(i16, i16)> = self.snake.iter().map(|p| (p.x, p.y)).collect();
         for (idx, npc) in self.npc_snakes.iter().enumerate() {
+            if npc_head_indices_to_remove.contains(&idx) {
+                continue;
+            }
             if let Some(npc_head) = npc.body.first() {
                 if player_set.contains(&(npc_head.x, npc_head.y)) {
-                    npc_indices_to_remove.push(idx);
+                    npc_head_indices_to_remove.push(idx);
+                }
+            }
+        }
+        // 无敌期间，NPC蛇身碰到玩家蛇身也导致NPC死亡
+        if invincible {
+            for (idx, npc) in self.npc_snakes.iter().enumerate() {
+                if npc_head_indices_to_remove.contains(&idx) {
+                    continue;
+                }
+                if npc.body.iter().any(|p| player_set.contains(&(p.x, p.y))) {
+                    npc_head_indices_to_remove.push(idx);
                 }
             }
         }
         // 从后往前删除，避免索引偏移；播放死亡粒子效果
-        for &idx in npc_indices_to_remove.iter().rev() {
+        for &idx in npc_head_indices_to_remove.iter().rev() {
             if let Some(dead_npc) = self.npc_snakes.get(idx) {
                 let head_pos = dead_npc.body[0];
                 self.particles.emit_npc_death_effect(head_pos.x, head_pos.y);
@@ -586,6 +608,7 @@ impl Game {
             self.particles
                 .emit_food_effect(self.food.position.x, self.food.position.y, 10);
             self.score_flash = Some(Instant::now());
+            self.invincible_until = Some(Instant::now() + Duration::from_secs(3));
             self.spawn_food();
         } else {
             self.snake.pop();
@@ -682,6 +705,8 @@ fn draw_game(stdout: &mut io::Stdout, game: &Game) -> io::Result<()> {
     let body_set: HashSet<(i16, i16)> = game.snake.iter().skip(1).map(|p| (p.x, p.y)).collect();
     let food_pos = (game.food.position.x, game.food.position.y);
     let food_visible = game.start_time.elapsed().as_millis() % 600 < 400;
+    let invincible = game.invincible_until.map_or(false, |t| Instant::now() < t);
+    let invincible_flash = invincible && game.start_time.elapsed().as_millis() % 200 < 100;
 
     // 构建所有NPC蛇位置集合
     let mut npc_head_positions: HashSet<(i16, i16)> = HashSet::new();
@@ -714,10 +739,25 @@ fn draw_game(stdout: &mut io::Stdout, game: &Game) -> io::Result<()> {
             print!("{}", '║'.to_string().with(border_color));
             for x in 1..game.width - 1 {
                 if head_pos == Some((x, y)) {
-                    let head_color = if flash_active { Color::White } else { Color::Green };
+                    let head_color = if invincible_flash {
+                        Color::Yellow
+                    } else if invincible {
+                        Color::White
+                    } else if flash_active {
+                        Color::White
+                    } else {
+                        Color::Green
+                    };
                     print!("{}", '█'.to_string().with(head_color));
                 } else if body_set.contains(&(x, y)) {
-                    print!("{}", '▓'.to_string().with(Color::DarkGreen));
+                    let body_color = if invincible_flash {
+                        Color::Yellow
+                    } else if invincible {
+                        Color::DarkYellow
+                    } else {
+                        Color::DarkGreen
+                    };
+                    print!("{}", '▓'.to_string().with(body_color));
                 } else if npc_head_positions.contains(&(x, y)) {
                     let npc_color = if food_visible { Color::Magenta } else { Color::DarkMagenta };
                     print!("{}", '█'.to_string().with(npc_color));
@@ -775,6 +815,11 @@ fn draw_game(stdout: &mut io::Stdout, game: &Game) -> io::Result<()> {
         print!("{}", format!("敌蛇: {} 条 (每15秒+1){:<10}", npc_count, npc_warn).with(
             if npc_count >= 5 { Color::Red } else { Color::DarkYellow }
         ));
+        if invincible {
+            let remaining = game.invincible_until.unwrap().duration_since(Instant::now()).as_secs_f32();
+            let inv_text = format!(" ★无敌 {:.1}s", remaining.max(0.0));
+            print!("{}", inv_text.with(Color::Yellow));
+        }
     }
 
     if info_y + 2 <= max_y {
